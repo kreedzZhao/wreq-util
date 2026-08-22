@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/0x676e67/wreq-util/compare/v0.1.0...v0.2.0) - 2026-08-22
+
+### Fixed
+
+- *(ci)* use default Cargo Dependabot strategy
+- correct header order and add missing headers in emulation profiles ([#104](https://github.com/0x676e67/wreq-util/pull/104))
+
+### Other
+
+- *(release)* [**breaking**] reset version baseline ([#108](https://github.com/0x676e67/wreq-util/pull/108))
+- Modify Dependabot settings for Cargo
+- *(example)* Update URLs for emulation examples in emulate.rs
+- Update API endpoint in README example
+
 ## [3.0.0-rc.14](https://github.com/0x676e67/wreq-util/compare/v3.0.0-rc.13...v3.0.0-rc.14) - 2026-07-04
 
 ### Fixed
