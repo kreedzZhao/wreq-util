@@ -74,6 +74,7 @@ jobs:
         with:
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           ignore-unpublished-changes: true
+          args: --features tokio-rt
       - name: Upload binaries to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
