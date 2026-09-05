@@ -5,8 +5,12 @@ use wreq_util::Emulation;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let url = std::env::args().nth(1).expect("usage: verify_chrome152 <url>");
-    let client = Client::builder().emulation(Emulation::Chrome152).build()?;
+    let url = std::env::args().nth(1).expect("usage: verify_chrome152 <url> [--insecure]");
+    let insecure = std::env::args().nth(2).as_deref() == Some("--insecure");
+    let client = Client::builder()
+        .emulation(Emulation::Chrome152)
+        .tls_cert_verification(!insecure)
+        .build()?;
     let resp = client.get(&url).send().await?;
     println!("status: {}", resp.status());
     Ok(())
