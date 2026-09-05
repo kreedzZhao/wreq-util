@@ -131,19 +131,27 @@ def frame(ftype, flags, stream, payload=b""):
     return struct.pack(">I", len(payload))[1:] + bytes([ftype, flags]) + struct.pack(">I", stream) + payload
 
 
+HTML = (b"<html><body>ok<script>"
+        b"var x=new XMLHttpRequest();x.open('GET','/xhr');x.send();"
+        b"fetch('/fetch');"
+        b"var s=new XMLHttpRequest();s.open('GET','/xhr-sync',false);"
+        b"try{s.send();}catch(e){}"
+        b"</script></body></html>")
+
+
 def read_h2(tls):
-    """Client preface + frames until the first HEADERS is decoded (or 3s passes)."""
-    deadline = time.monotonic() + 3.0
-    out = {"settings": [], "window_update": None, "priority_frames": [],
-           "pseudo_order": [], "header_order": [], "headers_priority": None}
+    """Serve h2 until the deadline, recording every request's HEADERS priority."""
+    deadline = time.monotonic() + 8.0
+    out = {"settings": [], "window_update": None, "priority_frames": [], "requests": []}
     preface = read_exact(tls, 24, deadline)
     assert preface == b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", preface
     tls.sendall(frame(4, 0, 0))  # server SETTINGS, empty
-    fragments, headers_done = b"", False
-    while time.monotonic() < deadline and not headers_done:
+    decoder, encoder = hpack.Decoder(), hpack.Encoder()
+    cur = None  # (stream, priority, fragments) of an unfinished HEADERS
+    while time.monotonic() < deadline:
         try:
             h = read_exact(tls, 9, deadline)
-        except (TimeoutError, socket.timeout):
+        except (TimeoutError, socket.timeout, ConnectionError):
             break
         ln = struct.unpack(">I", b"\x00" + h[:3])[0]
         ftype, flags = h[3], h[4]
@@ -154,49 +162,51 @@ def read_h2(tls):
                                 struct.unpack(">I", payload[i+2:i+6])[0])
                                for i in range(0, len(payload), 6)]
             tls.sendall(frame(4, 0x1, 0))  # ack
-        elif ftype == 8 and stream == 0:
+        elif ftype == 8 and stream == 0 and out["window_update"] is None:
             out["window_update"] = struct.unpack(">I", payload)[0] & 0x7fffffff
         elif ftype == 2:
             dep, weight = struct.unpack(">I", payload[:4])[0], payload[4]
             out["priority_frames"].append({"stream": stream, "excl": bool(dep >> 31),
                                            "dep": dep & 0x7fffffff, "weight": weight})
-        elif ftype == 1:
-            q = 0
-            pad = payload[0] if flags & 0x8 else 0
-            if flags & 0x8:
-                q += 1
-            if flags & 0x20:
-                dep, weight = struct.unpack(">I", payload[q:q+4])[0], payload[q+4]
-                out["headers_priority"] = {"excl": bool(dep >> 31),
-                                           "dep": dep & 0x7fffffff, "weight": weight}
-                q += 5
-            fragments += payload[q:len(payload) - pad]
+        elif ftype in (1, 9):  # HEADERS / CONTINUATION
+            q, pad, prio = 0, 0, None
+            if ftype == 1:
+                pad = payload[0] if flags & 0x8 else 0
+                if flags & 0x8:
+                    q += 1
+                if flags & 0x20:
+                    dep, weight = struct.unpack(">I", payload[q:q+4])[0], payload[q+4]
+                    prio = {"excl": bool(dep >> 31), "dep": dep & 0x7fffffff,
+                            "weight": weight}
+                    q += 5
+                cur = [stream, prio, b""]
+            if cur is None:
+                continue
+            cur[2] += payload[q:len(payload) - pad]
             if flags & 0x4:  # END_HEADERS
                 pairs = [(k.decode("ascii", "replace"), v.decode("ascii", "replace"))
-                         for k, v in hpack.Decoder().decode(fragments, raw=True)]
+                         for k, v in decoder.decode(cur[2], raw=True)]
                 names = [k for k, _ in pairs]
-                out["pseudo_values"] = {k: v for k, v in pairs if k.startswith(":")}
-                out["pseudo_order"] = [n for n in names if n.startswith(":")]
-                out["header_order"] = [n for n in names if not n.startswith(":")]
-                headers_done = True
-        elif ftype == 9:  # CONTINUATION
-            fragments += payload
-    # A minimal 200 so the client ends cleanly.
-    enc = hpack.Encoder()
-    tls.sendall(frame(1, 0x4 | 0x1, 1, enc.encode([(":status", "200")])))
-    tls.sendall(frame(7, 0, 0, struct.pack(">II", 1, 0)))  # GOAWAY
+                path = dict(pairs).get(":path")
+                out["requests"].append({
+                    "stream": cur[0], "path": path, "priority": cur[1],
+                    "pseudo_order": [n for n in names if n.startswith(":")]})
+                body = HTML if path == "/" else b"ok"
+                ctype = "text/html" if path == "/" else "text/plain"
+                tls.sendall(frame(1, 0x4, cur[0], encoder.encode(
+                    [(":status", "200"), ("content-type", ctype),
+                     ("content-length", str(len(body)))])))
+                tls.sendall(frame(0, 0x1, cur[0], body))  # DATA, END_STREAM
+                cur = None
     return out
-
-
 def akamai(h2):
     s = ";".join("%d:%d" % kv for kv in h2["settings"])
     wu = h2["window_update"] or 0
     pr = ",".join("%d:%d:%d:%d" % (p["stream"], int(p["excl"]), p["dep"], p["weight"])
                   for p in h2["priority_frames"]) or "0"
-    po = ",".join(n[1] for n in h2["pseudo_order"])
+    first = h2["requests"][0] if h2["requests"] else {"pseudo_order": []}
+    po = ",".join(n[1] for n in first["pseudo_order"])
     return "|".join([s, str(wu), pr, po])
-
-
 def handle(conn, addr, out_path, ctx):
     try:
         raw = peek_client_hello(conn)
