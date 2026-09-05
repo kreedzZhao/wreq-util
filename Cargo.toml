@@ -92,3 +92,8 @@ required-features = ["emulation"]
 name = "tower_delay"
 path = "examples/tower_delay.rs"
 required-features = ["tower-delay"]
+
+[[example]]
+name = "verify_chrome152"
+path = "examples/verify_chrome152.rs"
+required-features = ["emulation"]

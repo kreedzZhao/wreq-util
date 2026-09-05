@@ -1795,6 +1795,23 @@ mod_generator!(
     ]
 );
 
+// Chromium-branded, not Google-Chrome-branded: sec-ch-ua and UA are captured from a real
+// Chromium 152.0.7976.0 on macOS arm64 (2026-09-05), whose brand list has no "Google Chrome"
+// entry. MacOS only, because that is the only platform the capture covers; other platforms
+// fall back to it.
+mod_generator!(
+    v152,
+    v132::build_emulation,
+    header_initializer_with_zstd_priority,
+    [
+        (
+            MacOS,
+            r#""Not?A_Brand";v="24", "Chromium";v="152""#,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+        )
+    ]
+);
+
 mod_generator!(
     edge143,
     v132::build_emulation,
